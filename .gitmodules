@@ -1,0 +1,3 @@
+[submodule "lib/obd2-scanner"]
+	path = lib/obd2-scanner
+	url = https://github.com/diddyholz/OBD2-Scanner.git
