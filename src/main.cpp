@@ -54,7 +54,7 @@ int main(int argc, const char *argv[]) {
 }
 
 void print_request(obd2::request &req) {
-    std::vector<obd2::ecu> ecus = req.get_ecus();
+    std::list<obd2::ecu> &ecus = req.get_ecus();
 
     std::cout << std::hex << req.get_tx_id() << ARG_SEPERATOR << unsigned(req.get_sid()) << ARG_SEPERATOR << req.get_pid() << ": " << std::dec;
 
