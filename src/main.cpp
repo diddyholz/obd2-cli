@@ -69,7 +69,7 @@ void print_request(request_wrapper &reqw) {
     }
 
     if (ecus.size() == 0) {
-        std::cout << "\tNo response" << std::endl;
+        std::cout << "\tNo response" << std::endl << std::endl;
         return;
     }
 
