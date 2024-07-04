@@ -6,8 +6,13 @@
 #include <vector>
 #include <obd2.h>
 
-void print_request(obd2::request &req);
-void parse_argument(obd2::instance &obd, std::vector<std::reference_wrapper<obd2::request>> &requests, const char *arg);
+struct request_wrapper {
+    obd2::request &req;
+    std::string name;
+};
+
+void print_request(request_wrapper &req);
+void parse_argument(obd2::instance &obd, std::vector<request_wrapper> &requests, const char *arg);
 int split_str(std::string str, std::vector<std::string> &out, char c);
 void clear_screen();
 void error_invalid_arguments();
@@ -25,7 +30,7 @@ int main(int argc, const char *argv[]) {
     }
 
     obd2::instance *obd_instance;
-    std::vector<std::reference_wrapper<obd2::request>>requests;
+    std::vector<request_wrapper> requests;
 
     try {
         obd_instance = new obd2::instance(argv[1]);
@@ -42,7 +47,7 @@ int main(int argc, const char *argv[]) {
         // Print request responses
         clear_screen();
 
-        for (obd2::request &r : requests) {
+        for (request_wrapper &r : requests) {
             print_request(r);
         }
 
@@ -53,10 +58,15 @@ int main(int argc, const char *argv[]) {
     return 0;
 }
 
-void print_request(obd2::request &req) {
-    std::list<obd2::ecu> &ecus = req.get_ecus();
+void print_request(request_wrapper &reqw) {
+    std::list<obd2::ecu> &ecus = reqw.req.get_ecus();
 
-    std::cout << std::hex << req.get_tx_id() << ARG_SEPERATOR << unsigned(req.get_sid()) << ARG_SEPERATOR << req.get_pid() << ": " << std::dec;
+    if (reqw.name.empty()) {
+        std::cout << std::hex << reqw.req.get_tx_id() << ARG_SEPERATOR << unsigned(reqw.req.get_sid()) << ARG_SEPERATOR << reqw.req.get_pid() << ": " << std::dec;
+    }
+    else {
+        std::cout << reqw.name << ": ";
+    }
 
     if (ecus.size() == 0) {
         std::cout << "\tNo response" << std::endl;
@@ -78,10 +88,11 @@ void print_request(obd2::request &req) {
     std::cout << std::endl;
 }
 
-void parse_argument(obd2::instance &obd, std::vector<std::reference_wrapper<obd2::request>> &requests, const char *arg) {
+void parse_argument(obd2::instance &obd, std::vector<request_wrapper> &requests, const char *arg) {
     std::vector<std::string> options;
+    std::string name = "";
 
-    if (split_str(arg, options, ARG_SEPERATOR) != 3) {
+    if (split_str(arg, options, ARG_SEPERATOR) < 3) {
         error_invalid_arguments();
     }
 
@@ -93,7 +104,12 @@ void parse_argument(obd2::instance &obd, std::vector<std::reference_wrapper<obd2
             true
         );
 
-        requests.push_back(new_req);
+        if (options.size() > 3) {
+            name = options[3];
+        }
+
+        request_wrapper reqw = { .req = new_req, .name = name };
+        requests.push_back(reqw);
     }
     catch (std::exception &e) {
         error_exit("Cannot start OBD2 request: ", e.what());
