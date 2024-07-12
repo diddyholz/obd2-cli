@@ -1,7 +1,9 @@
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <vector>
 #include <obd2.h>
@@ -12,8 +14,8 @@ struct request_wrapper {
 };
 
 void print_request(request_wrapper &req);
-void parse_argument(obd2::instance &obd, std::vector<request_wrapper> &requests, const char *arg);
-int split_str(std::string str, std::vector<std::string> &out, char c);
+void parse_argument(obd2::obd2 &obd, std::vector<request_wrapper> &requests, const char *arg);
+size_t split_str(std::string str, std::vector<std::string> &out, char c);
 void clear_screen();
 void error_invalid_arguments();
 void error_exit(const char *error_title, const char *error_desc);
@@ -29,11 +31,11 @@ int main(int argc, const char *argv[]) {
         error_invalid_arguments();
     }
 
-    obd2::instance *obd_instance;
+    obd2::obd2 *obd_instance;
     std::vector<request_wrapper> requests;
 
     try {
-        obd_instance = new obd2::instance(argv[1]);
+        obd_instance = new obd2::obd2(argv[1]);
     }
     catch (std::exception &e) {
         error_exit("Cannot create OBD2 instance", e.what());
@@ -59,54 +61,65 @@ int main(int argc, const char *argv[]) {
 }
 
 void print_request(request_wrapper &reqw) {
-    std::list<obd2::ecu> &ecus = reqw.req.get_ecus();
-
     if (reqw.name.empty()) {
-        std::cout << std::hex << reqw.req.get_tx_id() << ARG_SEPERATOR << unsigned(reqw.req.get_sid()) << ARG_SEPERATOR << reqw.req.get_pid() << ": " << std::dec;
+        std::cout << std::hex << reqw.req.get_ecu_id() << ARG_SEPERATOR << uint8_t(reqw.req.get_service()) << ARG_SEPERATOR << reqw.req.get_pid() << ": " << std::dec;
     }
     else {
-        std::cout << reqw.name << ": ";
+        std::cout << reqw.name << ":\t";
     }
 
-    if (ecus.size() == 0) {
-        std::cout << "\tNo response" << std::endl << std::endl;
+    // Handle raw values
+    if (reqw.req.get_formula().empty()) {
+        const std::vector<uint8_t> &raw = reqw.req.get_raw();
+
+        if (raw.size() == 0) {
+            std::cout << "No response" << std::endl;
+            return;
+        }
+
+        for (uint8_t b : raw) {
+            std::cout << std::setfill('0') << std::setw(2) << std::hex << int(b) << " ";
+        }
+
+        std::cout << std::dec << std::setw(0) << std::endl;
         return;
     }
 
-    for (obd2::ecu &e : ecus) {
-        const std::vector<uint8_t> &res = e.get_current_response_buf();
+    float val = reqw.req.get_value();
 
-        std::cout << "\tECU " << std::hex << e.get_rx_id() << ": ";
-
-        for (uint8_t byte : res) {
-            std::cout << unsigned(byte) << " ";
-        }
-
-        std::cout << std::dec << std::endl << "\t";
+    if (std::isnan(val)) {
+        std::cout << "No response" << std::endl;
+        return;
     }
-
-    std::cout << std::endl;
+    
+    std::cout << val << std::endl;
 }
 
-void parse_argument(obd2::instance &obd, std::vector<request_wrapper> &requests, const char *arg) {
+void parse_argument(obd2::obd2 &obd, std::vector<request_wrapper> &requests, const char *arg) {
     std::vector<std::string> options;
     std::string name = "";
+    std::string formula = "";
 
     if (split_str(arg, options, ARG_SEPERATOR) < 3) {
         error_invalid_arguments();
+    }
+
+    if (options.size() > 3) {
+        name = options[3];
+    }
+    
+    if (options.size() > 4) {
+        formula = options[4];
     }
 
     try {
         obd2::request &new_req = obd.add_request(
             std::stoul(options[0], nullptr, 16), 
             std::stoi(options[1], nullptr, 16), 
-            std::stoi(options[2], nullptr, 16), 
+            std::stoi(options[2], nullptr, 16),
+            formula,
             true
         );
-
-        if (options.size() > 3) {
-            name = options[3];
-        }
 
         request_wrapper reqw = { .req = new_req, .name = name };
         requests.push_back(reqw);
@@ -116,16 +129,16 @@ void parse_argument(obd2::instance &obd, std::vector<request_wrapper> &requests,
     }
 }
 
-int split_str(std::string str, std::vector<std::string> &out, char c) {
+size_t split_str(std::string str, std::vector<std::string> &out, char c) {
     out.clear();
 
     while (str.length() > 0)
     {
-        int c_pos = str.find(c);
+        size_t c_pos = str.find(c);
         bool str_complete = false;
 
         // If character cannot be found, read until end of string
-        if (c_pos < 0) {
+        if (c_pos == std::string::npos) {
             c_pos = str.length();
             str_complete = true;
         }
