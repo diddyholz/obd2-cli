@@ -6,15 +6,21 @@
 #include <iomanip>
 #include <iostream>
 #include <vector>
+#include <future>
 #include <obd2.h>
 
 struct request_wrapper {
-    obd2::request &req;
+    obd2::request req;
     std::string name;
 };
 
+void print_info(obd2::obd2 &instance);
+void print_dtcs(obd2::obd2 &instance);
+void clear_dtcs(obd2::obd2 &instance);
+void print_pids(obd2::obd2 &instance);
+void print_requests(obd2::obd2 &instance, std::vector<request_wrapper> &requests);
 void print_request(request_wrapper &req);
-void parse_argument(obd2::obd2 &obd, std::vector<request_wrapper> &requests, const char *arg);
+request_wrapper parse_argument(obd2::obd2 &obd, const char *arg);
 size_t split_str(std::string str, std::vector<std::string> &out, char c);
 void clear_screen();
 void error_invalid_arguments();
@@ -31,20 +37,131 @@ int main(int argc, const char *argv[]) {
         error_invalid_arguments();
     }
 
-    obd2::obd2 *obd_instance;
-    std::vector<request_wrapper> requests;
+    std::string command = argv[2];
+    std::unique_ptr<obd2::obd2> obd_instance;
 
     try {
-        obd_instance = new obd2::obd2(argv[1]);
+        obd_instance = std::make_unique<obd2::obd2>(argv[1]);
     }
     catch (std::exception &e) {
         error_exit("Cannot create OBD2 instance", e.what());
     }
 
-    for (int i = 2; i < argc; i++) {
-        parse_argument(*obd_instance, requests, argv[i]);
+    if (command == "info") {
+        print_info(*obd_instance);
+    }
+    else if (command == "dtc_list") {
+        print_dtcs(*obd_instance);
+    }
+    else if (command == "dtc_clear") {
+        clear_dtcs(*obd_instance);
+    }
+    else if (command == "pids") {
+        print_pids(*obd_instance);
+    }
+    else if (command == "read") {
+        std::vector<request_wrapper> requests;
+
+        for (int i = 3; i < argc; i++) {
+            requests.push_back(parse_argument(*obd_instance, argv[i]));
+        }
+
+        print_requests(*obd_instance, requests);
+    } 
+    else {
+        error_invalid_arguments();
     }
 
+    return 0;
+}
+
+void print_info(obd2::obd2 &instance) {
+    std::cout << "Reading vehicle information..." << std::endl;
+
+    obd2::vehicle_info info = instance.get_vehicle_info();
+
+    std::cout << "VIN:\t\t" << info.vin << std::endl;
+    std::cout << "Ignition Type:\t" << info.ign_type << std::endl;
+    std::cout << "ECUs:\t\t" << std::hex << std::setfill('0') << std::setw(3);
+
+    if (info.ecus.size() == 0) {
+        std::cout << "None" << std::endl;
+    }
+
+    std::cout << std::endl;
+
+    for (obd2::vehicle_info::ecu &ecu : info.ecus) {
+        std::cout << "\t" << ecu.id << ": " << ecu.name << std::endl;
+    }
+}
+
+void print_dtcs(obd2::obd2 &instance) {
+    std::cout << "Reading DTCs..." << std::endl;
+
+    obd2::vehicle_info info = instance.get_vehicle_info();
+
+    std::vector<std::future<std::vector<obd2::dtc>>> dtc_futures;
+    dtc_futures.reserve(info.ecus.size());
+
+    // Asynchronously get DTCs for each ECU
+    for (obd2::vehicle_info::ecu &ecu : info.ecus) {
+        dtc_futures.emplace_back(
+            std::async(
+                std::launch::async, 
+                &obd2::obd2::get_dtcs, 
+                &instance, 
+                ecu.id
+            )
+        );
+    }
+
+    for (size_t i = 0; i < dtc_futures.size(); i++) {
+        obd2::vehicle_info::ecu &ecu = info.ecus[i];
+        std::vector<obd2::dtc> dtcs = dtc_futures[i].get();
+
+        std::cout << "ECU " << ecu.name << " (" << std::hex << std::setfill('0') << std::setw(3) 
+            << ecu.id << std::dec << std::setw(0) << "): " << std::endl;
+        
+        if (dtcs.size() == 0) {
+            std::cout << "\tNo DTCs" << std::endl;
+        }
+
+        for (obd2::dtc &dtc : dtcs) {
+            std::cout << "\t\t\t" << dtc << std::endl;
+        }
+    }
+}
+
+void clear_dtcs(obd2::obd2 &instance) {
+    std::cout << "Clearing DTCs..." << std::endl;
+
+    obd2::vehicle_info info = instance.get_vehicle_info();
+
+    for (obd2::vehicle_info::ecu &ecu : info.ecus) {
+        obd2::request req = obd2::request(ecu.id, 0x04, 0x00, instance);
+    }
+}
+
+void print_pids(obd2::obd2 &instance) {
+    std::cout << "Reading supported Service 01 PIDs..." << std::endl;
+
+    obd2::vehicle_info info = instance.get_vehicle_info();
+
+    for (obd2::vehicle_info::ecu &ecu : info.ecus) {
+        std::vector<uint8_t> pids = instance.get_supported_pids(ecu.id);
+
+        std::cout << "ECU " << std::hex << std::setfill('0') << std::setw(3) 
+            << ecu.id << std::setw(2) << ": " << std::endl;
+
+        for (uint8_t pid : pids) {
+            std::cout << "\t" << int(pid) << std::endl;
+        }
+
+        std::cout << std::dec << std::setw(0);
+    }
+}
+
+void print_requests(obd2::obd2 &instance, std::vector<request_wrapper> &requests) {
     for (;;) {
         // Print request responses
         clear_screen();
@@ -54,10 +171,7 @@ int main(int argc, const char *argv[]) {
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }    
-
-    delete obd_instance;
-    return 0;
+    }   
 }
 
 void print_request(request_wrapper &reqw) {
@@ -95,7 +209,7 @@ void print_request(request_wrapper &reqw) {
     std::cout << val << std::endl;
 }
 
-void parse_argument(obd2::obd2 &obd, std::vector<request_wrapper> &requests, const char *arg) {
+request_wrapper parse_argument(obd2::obd2 &obd, const char *arg) {
     std::vector<std::string> options;
     std::string name = "";
     std::string formula = "";
@@ -112,21 +226,25 @@ void parse_argument(obd2::obd2 &obd, std::vector<request_wrapper> &requests, con
         formula = options[4];
     }
 
+    request_wrapper reqw;
+
     try {
-        obd2::request &new_req = obd.add_request(
+        reqw.req = obd2::request(
             std::stoul(options[0], nullptr, 16), 
             std::stoi(options[1], nullptr, 16), 
             std::stoi(options[2], nullptr, 16),
+            obd,
             formula,
             true
         );
-
-        request_wrapper reqw = { .req = new_req, .name = name };
-        requests.push_back(reqw);
     }
     catch (std::exception &e) {
         error_exit("Cannot start OBD2 request: ", e.what());
     }
+
+    reqw.name = name;
+
+    return reqw;
 }
 
 size_t split_str(std::string str, std::vector<std::string> &out, char c) {
@@ -161,7 +279,8 @@ void clear_screen() {
 }
 
 void error_invalid_arguments() {
-    std::string desc = "\nUsage: " + app_name + " network msg_id:sid:pid {msg_id:sid:pid}";
+    std::string desc = "\nUsage: " + app_name + " network command\n\n" 
+        + "commands: read, info, dtc_list, dtc_clear, pids";
     error_exit("Invalid Arguments", desc.c_str());
 }
 
