@@ -2,32 +2,33 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
+#include <csignal>
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <fstream>
+#include <limits>
+#include <map>
 #include <vector>
 #include <future>
 #include <obd2.h>
-
-struct request_wrapper {
-    obd2::request req;
-    std::string name;
-};
+#include "vehicle/vehicle.h"
+#include "csv_logger/csv_logger.h"
 
 void print_info(obd2::obd2 &instance);
 void print_dtcs(obd2::obd2 &instance);
 void clear_dtcs(obd2::obd2 &instance);
 void print_pids(obd2::obd2 &instance);
-void print_requests(obd2::obd2 &instance, std::vector<request_wrapper> &requests);
-void print_request(request_wrapper &req);
-request_wrapper parse_argument(obd2::obd2 &obd, const char *arg);
-size_t split_str(std::string str, std::vector<std::string> &out, char c);
+void log_requests(obd2::obd2 &instance, int argc, const char *argv[]);
+std::map<const obd2_server::request *, obd2::request> create_requests(obd2::obd2 &instance, obd2_server::vehicle &vehicle);
+void print_requests(std::map<const obd2_server::request *, obd2::request> &requests, uint32_t refresh_ms);
+float print_request(std::pair<const obd2_server::request *const, obd2::request> &req);
 void clear_screen();
 void error_invalid_arguments();
 void error_exit(const char *error_title, const char *error_desc);
 
 const char ARG_SEPERATOR = ':';
-const int REFRESH_TIME = 1000;
 std::string app_name;
 
 int main(int argc, const char *argv[]) {
@@ -59,14 +60,8 @@ int main(int argc, const char *argv[]) {
     else if (command == "pids") {
         print_pids(*obd_instance);
     }
-    else if (command == "read") {
-        std::vector<request_wrapper> requests;
-
-        for (int i = 3; i < argc; i++) {
-            requests.push_back(parse_argument(*obd_instance, argv[i]));
-        }
-
-        print_requests(*obd_instance, requests);
+    else if (command == "log") {
+        log_requests(*obd_instance, argc, argv);
     } 
     else {
         error_invalid_arguments();
@@ -161,34 +156,104 @@ void print_pids(obd2::obd2 &instance) {
     }
 }
 
-void print_requests(obd2::obd2 &instance, std::vector<request_wrapper> &requests) {
-    for (;;) {
-        // Print request responses
-        clear_screen();
+void log_requests(obd2::obd2 &instance, int argc, const char *argv[]) {
+    if (argc < 4) {
+        error_invalid_arguments();
+    }
 
-        for (request_wrapper &r : requests) {
-            print_request(r);
+    obd2_server::vehicle vehicle;
+    uint32_t refresh_ms = 1000;
+
+    try {
+        vehicle = obd2_server::vehicle(argv[3]);
+    }
+    catch (std::exception &e) {
+        error_exit("Cannot read vehicle definition", e.what());
+    }
+
+    if (argc > 4) {
+        refresh_ms = std::atoi(argv[4]);
+    }
+
+    instance.set_refresh_ms(refresh_ms);
+
+    std::map<const obd2_server::request *, obd2::request> requests = create_requests(instance, vehicle);
+    print_requests(requests, refresh_ms);
+}
+
+std::map<const obd2_server::request *, obd2::request> create_requests(obd2::obd2 &instance, obd2_server::vehicle &vehicle) {
+    std::map<const obd2_server::request *, obd2::request> requests;
+
+    std::cout << "Fetching supported PIDs..." << std::endl;
+
+    std::vector<uint8_t> pids = instance.get_supported_pids(0x7E0);
+
+    for (const obd2_server::request &req : vehicle.get_requests()) {
+        if (req.ecu == 0x7E0 && req.service == 0x01 && std::find(pids.begin(), pids.end(), req.pid) == pids.end()) {
+            continue;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        requests.try_emplace(&req, req.ecu, req.service, req.pid, instance, req.formula, true);
+    }
+
+    return requests;
+}
+
+void print_requests(std::map<const obd2_server::request *, obd2::request> &requests, uint32_t refresh_ms) {
+    std::vector<std::string> data_log_headers;
+    data_log_headers.reserve(requests.size() + 1);
+    data_log_headers.push_back("timestamp");
+
+    for (const auto &p : requests) {
+        data_log_headers.push_back(p.first->name);
+    }
+
+    obd2_server::csv_logger logger(data_log_headers);
+
+    // Print request responses in infinite loop
+    for (;;) {
+        clear_screen();
+
+        uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::vector<float> data;
+        data.reserve(requests.size());
+
+        for (auto &p : requests) {
+            float val = print_request(p);
+            data.push_back(val);
+        }
+
+        logger.write_row(data);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(refresh_ms));
     }   
 }
 
-void print_request(request_wrapper &reqw) {
-    if (reqw.name.empty()) {
-        std::cout << std::hex << reqw.req.get_ecu_id() << ARG_SEPERATOR << uint8_t(reqw.req.get_service()) << ARG_SEPERATOR << reqw.req.get_pid() << ": " << std::dec;
-    }
-    else {
-        std::cout << reqw.name << ":\t";
+float print_request(std::pair<const obd2_server::request *const, obd2::request> &req) {
+    static uint8_t name_width = 0;
+    std::string name = req.first->name;
+
+    if (name.empty()) {
+        std::stringstream ss;
+        ss << std::hex << req.first->ecu << ARG_SEPERATOR << uint8_t(req.first->service) << ARG_SEPERATOR << req.first->pid;
+        name = ss.str();
     }
 
+    name += ": ";
+
+    if (name.size() > name_width) {
+        name_width = name.size();
+    }
+
+    std::cout << std::setw(name_width) << std::setfill(' ') << std::left << name << std::setw(0);
+
     // Handle raw values
-    if (reqw.req.get_formula().empty()) {
-        const std::vector<uint8_t> &raw = reqw.req.get_raw();
+    if (req.second.get_formula().empty()) {
+        const std::vector<uint8_t> &raw = req.second.get_raw();
 
         if (raw.size() == 0) {
             std::cout << "No response" << std::endl;
-            return;
+            return std::numeric_limits<float>::quiet_NaN();
         }
 
         for (uint8_t b : raw) {
@@ -196,82 +261,18 @@ void print_request(request_wrapper &reqw) {
         }
 
         std::cout << std::dec << std::setw(0) << std::endl;
-        return;
+        return std::numeric_limits<float>::quiet_NaN();
     }
 
-    float val = reqw.req.get_value();
+    float val = req.second.get_value();
 
     if (std::isnan(val)) {
         std::cout << "No response" << std::endl;
-        return;
+        return std::numeric_limits<float>::quiet_NaN();
     }
     
-    std::cout << val << std::endl;
-}
-
-request_wrapper parse_argument(obd2::obd2 &obd, const char *arg) {
-    std::vector<std::string> options;
-    std::string name = "";
-    std::string formula = "";
-
-    if (split_str(arg, options, ARG_SEPERATOR) < 3) {
-        error_invalid_arguments();
-    }
-
-    if (options.size() > 3) {
-        name = options[3];
-    }
-    
-    if (options.size() > 4) {
-        formula = options[4];
-    }
-
-    request_wrapper reqw;
-
-    try {
-        reqw.req = obd2::request(
-            std::stoul(options[0], nullptr, 16), 
-            std::stoi(options[1], nullptr, 16), 
-            std::stoi(options[2], nullptr, 16),
-            obd,
-            formula,
-            true
-        );
-    }
-    catch (std::exception &e) {
-        error_exit("Cannot start OBD2 request: ", e.what());
-    }
-
-    reqw.name = name;
-
-    return reqw;
-}
-
-size_t split_str(std::string str, std::vector<std::string> &out, char c) {
-    out.clear();
-
-    while (str.length() > 0)
-    {
-        size_t c_pos = str.find(c);
-        bool str_complete = false;
-
-        // If character cannot be found, read until end of string
-        if (c_pos == std::string::npos) {
-            c_pos = str.length();
-            str_complete = true;
-        }
-
-        out.emplace_back(str.substr(0, c_pos));
-
-        if (str_complete) {
-            break;
-        }
-
-        str = str.substr(c_pos + 1, str.length() - c_pos - 1);
-    }
-    
-    out.shrink_to_fit();
-    return out.size();
+    std::cout << val << req.first->unit << std::endl;
+    return val;
 }
 
 void clear_screen() {
@@ -280,7 +281,7 @@ void clear_screen() {
 
 void error_invalid_arguments() {
     std::string desc = "\nUsage: " + app_name + " network command\n\n" 
-        + "commands: read, info, dtc_list, dtc_clear, pids";
+        + "commands: log, info, dtc_list, dtc_clear, pids";
     error_exit("Invalid Arguments", desc.c_str());
 }
 
