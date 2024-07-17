@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -25,12 +26,14 @@ std::map<const obd2_server::request *, obd2::request> create_requests(obd2::obd2
 void print_requests(std::map<const obd2_server::request *, obd2::request> &requests);
 float print_request(std::pair<const obd2_server::request *const, obd2::request> &req);
 void clear_screen();
+void sigint_handler(int sig);
 void error_invalid_arguments();
 void error_exit(const char *error_title, const char *error_desc);
 
 const char ARG_SEPERATOR = ':';
 std::string app_name;
 obd2_server::csv_logger logger;
+std::atomic<bool> running = true;
 
 int main(int argc, const char *argv[]) {
     app_name = argv[0];
@@ -39,30 +42,32 @@ int main(int argc, const char *argv[]) {
         error_invalid_arguments();
     }
 
+    signal(SIGINT, sigint_handler);
+
     std::string command = argv[2];
-    std::unique_ptr<obd2::obd2> obd_instance;
+    obd2::obd2 obd_instance;
 
     try {
-        obd_instance = std::make_unique<obd2::obd2>(argv[1]);
+        obd_instance = obd2::obd2(argv[1]);
     }
     catch (std::exception &e) {
         error_exit("Cannot create OBD2 instance", e.what());
     }
 
     if (command == "info") {
-        print_info(*obd_instance);
+        print_info(obd_instance);
     }
     else if (command == "dtc_list") {
-        print_dtcs(*obd_instance);
+        print_dtcs(obd_instance);
     }
     else if (command == "dtc_clear") {
-        clear_dtcs(*obd_instance);
+        clear_dtcs(obd_instance);
     }
     else if (command == "pids") {
-        print_pids(*obd_instance);
+        print_pids(obd_instance);
     }
     else if (command == "log") {
-        log_requests(*obd_instance, argc, argv);
+        log_requests(obd_instance, argc, argv);
     } 
     else {
         error_invalid_arguments();
@@ -181,6 +186,10 @@ void log_requests(obd2::obd2 &instance, int argc, const char *argv[]) {
 
     instance.set_refresh_ms(refresh_ms);
     requests = create_requests(instance, vehicle);
+
+    if (requests.size() == 0) {
+        error_exit("No requests to log", "No supported PIDs found");
+    }
     
     std::vector<std::string> data_log_headers;
     data_log_headers.reserve(requests.size() + 1);
@@ -194,7 +203,7 @@ void log_requests(obd2::obd2 &instance, int argc, const char *argv[]) {
     instance.set_refreshed_cb(std::bind(print_requests, std::ref(requests)));
 
     // Infinite loop to keep the program running
-    while (true) {
+    while (running) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
@@ -280,6 +289,10 @@ float print_request(std::pair<const obd2_server::request *const, obd2::request> 
 
 void clear_screen() {
     std::cout << "\033[2J\033[1;1H";
+}
+
+void sigint_handler(int sig) {
+    running = false;
 }
 
 void error_invalid_arguments() {
