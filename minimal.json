@@ -1,0 +1,46 @@
+{
+    "id": "c1455860-be00-41bc-a948-772dc9d53f50",
+    "make": "OBD2",
+    "model": "Standard",
+    "requests": [
+        {
+            "id": "c2726f9a-1e1b-4e17-9c3b-2b72fda1ab89",
+            "name": "Engine coolant temperature",
+            "description": "",
+            "category": "Engine",
+            "ecu": 2016,
+            "service": 1,
+            "pid": 5,
+            "formula": "A-40",
+            "unit": "°C",
+            "min": -40,
+            "max": 215
+        },     
+        {
+            "id": "15c1b998-883e-4b57-914b-56a2f5d4c987",
+            "name": "Engine RPM",
+            "description": "",
+            "category": "Engine",
+            "ecu": 2016,
+            "service": 1,
+            "pid": 12,
+            "formula": "(256*A+B)/4",
+            "unit": "rpm",
+            "min": 0,
+            "max": 16383.75
+        },
+        {
+            "id": "d04082b5-c1a7-40b7-a892-1f5e68e1bc5f",
+            "name": "Throttle position",
+            "description": "",
+            "category": "Intake",
+            "ecu": 2016,
+            "service": 1,
+            "pid": 17,
+            "formula": "100/255*A",
+            "unit": "%",
+            "min": 0,
+            "max": 100
+        }
+    ]
+}

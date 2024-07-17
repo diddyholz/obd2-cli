@@ -22,7 +22,7 @@ void clear_dtcs(obd2::obd2 &instance);
 void print_pids(obd2::obd2 &instance);
 void log_requests(obd2::obd2 &instance, int argc, const char *argv[]);
 std::map<const obd2_server::request *, obd2::request> create_requests(obd2::obd2 &instance, obd2_server::vehicle &vehicle);
-void print_requests(std::map<const obd2_server::request *, obd2::request> &requests, uint32_t refresh_ms);
+void print_requests(std::map<const obd2_server::request *, obd2::request> &requests);
 float print_request(std::pair<const obd2_server::request *const, obd2::request> &req);
 void clear_screen();
 void error_invalid_arguments();
@@ -30,6 +30,7 @@ void error_exit(const char *error_title, const char *error_desc);
 
 const char ARG_SEPERATOR = ':';
 std::string app_name;
+obd2_server::csv_logger logger;
 
 int main(int argc, const char *argv[]) {
     app_name = argv[0];
@@ -161,8 +162,11 @@ void log_requests(obd2::obd2 &instance, int argc, const char *argv[]) {
         error_invalid_arguments();
     }
 
+    std::map<const obd2_server::request *, obd2::request> requests;
     obd2_server::vehicle vehicle;
     uint32_t refresh_ms = 1000;
+
+    std::cout << "Reading vehicle definition..." << std::endl;
 
     try {
         vehicle = obd2_server::vehicle(argv[3]);
@@ -176,9 +180,23 @@ void log_requests(obd2::obd2 &instance, int argc, const char *argv[]) {
     }
 
     instance.set_refresh_ms(refresh_ms);
+    requests = create_requests(instance, vehicle);
+    
+    std::vector<std::string> data_log_headers;
+    data_log_headers.reserve(requests.size() + 1);
+    data_log_headers.push_back("timestamp");
 
-    std::map<const obd2_server::request *, obd2::request> requests = create_requests(instance, vehicle);
-    print_requests(requests, refresh_ms);
+    for (const auto &p : requests) {
+        data_log_headers.push_back(p.first->name);
+    }
+
+    logger = obd2_server::csv_logger(data_log_headers);
+    instance.set_refreshed_cb(std::bind(print_requests, std::ref(requests)));
+
+    // Infinite loop to keep the program running
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
 }
 
 std::map<const obd2_server::request *, obd2::request> create_requests(obd2::obd2 &instance, obd2_server::vehicle &vehicle) {
@@ -199,34 +217,19 @@ std::map<const obd2_server::request *, obd2::request> create_requests(obd2::obd2
     return requests;
 }
 
-void print_requests(std::map<const obd2_server::request *, obd2::request> &requests, uint32_t refresh_ms) {
-    std::vector<std::string> data_log_headers;
-    data_log_headers.reserve(requests.size() + 1);
-    data_log_headers.push_back("timestamp");
+void print_requests(std::map<const obd2_server::request *, obd2::request> &requests) {
+    uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::vector<float> data;
+    data.reserve(requests.size());
+    
+    clear_screen();
 
-    for (const auto &p : requests) {
-        data_log_headers.push_back(p.first->name);
+    for (auto &p : requests) {
+        float val = print_request(p);
+        data.push_back(val);
     }
 
-    obd2_server::csv_logger logger(data_log_headers);
-
-    // Print request responses in infinite loop
-    for (;;) {
-        clear_screen();
-
-        uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        std::vector<float> data;
-        data.reserve(requests.size());
-
-        for (auto &p : requests) {
-            float val = print_request(p);
-            data.push_back(val);
-        }
-
-        logger.write_row(data);
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(refresh_ms));
-    }   
+    logger.write_row(data);
 }
 
 float print_request(std::pair<const obd2_server::request *const, obd2::request> &req) {
