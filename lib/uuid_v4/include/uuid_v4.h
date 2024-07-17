@@ -14,9 +14,10 @@ Copyright (c) 2018 Xavier "Crashoz" Launey
 #include <cstdint>
 #include <memory>
 
-#include <emmintrin.h>
-#include <smmintrin.h>
-#include <immintrin.h>
+#define SIMDE_ENABLE_NATIVE_ALIASES
+#include <x86/sse2.h>
+#include <x86/sse4.2.h>
+#include <x86/avx2.h>
 
 #include "endianness.h"
 

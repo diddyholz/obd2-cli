@@ -1,5 +1,5 @@
 CXX=g++
-CXX_FLAGS=-g -Og -std=c++20 -march=native -pedantic -Wall -Wextra -Wnoexcept -Wcast-align -Wctor-dtor-privacy -Wdisabled-optimization -Wformat=2 -Winit-self -Wlogical-op -Wmissing-declarations -Wmissing-include-dirs -Woverloaded-virtual -Wredundant-decls -Wsign-promo -Wstrict-null-sentinel -Wstrict-overflow=5 -Wswitch-default -Wundef -Werror -Wno-unused
+CXX_FLAGS=-g -Og -std=c++20 -march=native -pedantic -Wall -Wextra -Wnoexcept -Wctor-dtor-privacy -Wdisabled-optimization -Wformat=2 -Winit-self -Wlogical-op -Wmissing-declarations -Wmissing-include-dirs -Woverloaded-virtual -Wredundant-decls -Wsign-promo -Wstrict-null-sentinel -Wundef -Werror -Wno-unused
 
 LD=g++
 LD_FLAGS=-g
