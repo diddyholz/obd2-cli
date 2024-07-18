@@ -10,6 +10,7 @@ namespace obd2_server {
             std::ofstream file;
 
             void write_header(const std::vector<std::string> &header);
+            std::string get_time_string(uint64_t timestamp) const;
             
         public:
             csv_logger();
