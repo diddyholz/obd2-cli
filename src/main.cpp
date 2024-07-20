@@ -42,8 +42,6 @@ int main(int argc, const char *argv[]) {
         error_invalid_arguments();
     }
 
-    signal(SIGINT, sigint_handler);
-
     std::string command = argv[2];
     obd2::obd2 obd_instance;
 
@@ -200,6 +198,7 @@ void log_requests(obd2::obd2 &instance, int argc, const char *argv[]) {
     }
 
     logger = obd2_server::csv_logger(data_log_headers);
+    signal(SIGINT, sigint_handler);
     instance.set_refreshed_cb(std::bind(print_requests, std::ref(requests)));
 
     // Infinite loop to keep the program running
